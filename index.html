@@ -28,6 +28,13 @@
         input[type="file"]::file-selector-button {
             @apply font-semibold bg-blue-50 text-blue-700 border-0 mr-4 px-4 py-2 rounded-md cursor-pointer hover:bg-blue-100 transition-colors;
         }
+        .task-done p, .task-done em {
+            text-decoration: line-through;
+            color: #9ca3af; /* gray-400 */
+        }
+        .kanban-column { min-height: 200px; }
+        .dragging { opacity: 0.5; transform: rotate(2deg); }
+        #suggestionModal.hidden { display: none; }
     </style>
 </head>
 <body class="bg-gray-100 flex flex-col items-center justify-center min-h-screen p-4">
@@ -47,7 +54,7 @@
     </div>
 
     <!-- Main App Container -->
-    <div id="appContainer" class="w-full max-w-2xl bg-white p-8 rounded-xl shadow-lg" style="display: none;">
+    <div id="appContainer" class="w-full max-w-4xl bg-white p-8 rounded-xl shadow-lg" style="display: none;">
         <div id="userStatus" class="text-center mb-6 p-3 bg-gray-100 rounded-md flex justify-between items-center"></div>
         
         <div class="mb-10">
@@ -67,12 +74,46 @@
             <button id="uploadButton" class="w-full py-3 px-4 mt-4 bg-green-600 text-white font-semibold rounded-md hover:bg-green-700 transition-colors">Tóm tắt và Lưu trữ</button>
             <p id="uploadStatus" class="text-center font-medium mt-4 h-5"></p>
         </div>
+        
+        <div class="border-t pt-8 mb-10">
+            <h1 class="text-3xl font-bold text-slate-800 mb-2">Trợ lý Phân tích Hiệu suất</h1>
+            <p class="text-gray-500 mb-6">Nhấn nút bên dưới để AI xem lại các công việc trong 7 ngày qua và đưa ra nhận xét, gợi ý cho bạn.</p>
+            <button id="analyzeWeekButton" class="w-full py-3 px-4 mt-4 bg-indigo-600 text-white font-semibold rounded-md hover:bg-indigo-700 transition-colors">Phân tích Tuần của tôi</button>
+            <div id="reviewContainer" class="mt-4 p-4 border border-gray-200 bg-gray-50 rounded-md min-h-[120px] text-gray-700 whitespace-pre-wrap flex items-center justify-center">Chưa có phân tích...</div>
+        </div>
+        
+        <div class="border-t pt-8 mb-10">
+            <h1 class="text-3xl font-bold text-slate-800 mb-2">Trợ lý Chủ động</h1>
+            <p class="text-gray-500 mb-6">Bạn đang bị kẹt ở một công việc nào đó? Hãy để AI tìm và đưa ra gợi ý giúp bạn khơi thông ý tưởng.</p>
+            <button id="findStuckTaskButton" class="w-full py-3 px-4 mt-4 bg-amber-500 text-white font-semibold rounded-md hover:bg-amber-600 transition-colors">Tìm và gỡ rối giúp tôi!</button>
+            <div id="stuckTaskContainer" class="mt-4 p-4 border-gray-200 bg-gray-50 rounded-md min-h-[120px] text-gray-700 whitespace-pre-wrap flex items-center justify-center">Chưa có gợi ý...</div>
+        </div>
 
         <div>
-            <h2 class="text-2xl font-bold text-slate-700 mb-4">Kế hoạch Hiện tại</h2>
-            <div id="responseContainer" class="mt-2 p-4 border border-gray-200 bg-gray-50 rounded-md min-h-[150px] text-gray-700 whitespace-pre-wrap flex items-center justify-center"></div>
+            <div class="flex items-center justify-between mb-4">
+                 <h2 class="text-2xl font-bold text-slate-700">Kế hoạch Hiện tại</h2>
+                 <div id="view-switcher" class="flex space-x-1 bg-gray-200 p-1 rounded-md">
+                     <button data-view="checklist" class="px-3 py-1 text-sm font-semibold rounded-md bg-white text-blue-600 shadow">Checklist</button>
+                     <button data-view="kanban" class="px-3 py-1 text-sm font-semibold rounded-md text-gray-600">Kanban</button>
+                 </div>
+            </div>
+            <div id="responseContainer" class="mt-2 p-4 border border-gray-200 bg-gray-50 rounded-md min-h-[250px] text-gray-700 whitespace-pre-wrap flex items-center justify-center"></div>
         </div>
     </div>
+
+    <!-- Suggestion Modal -->
+    <div id="suggestionModal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center">
+        <div class="relative mx-auto p-5 border w-full max-w-2xl shadow-lg rounded-md bg-white">
+            <div class="mt-3 text-center">
+                <h3 class="text-lg leading-6 font-medium text-gray-900">Gợi ý từ AI</h3>
+                <div id="modal-content" class="mt-2 px-7 py-3 max-h-96 overflow-y-auto"></div>
+                <div class="items-center px-4 py-3">
+                    <button id="closeModalButton" class="px-4 py-2 bg-gray-500 text-white text-base font-medium rounded-md w-full shadow-sm hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-300">Đóng</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
 
     <script type="module">
         // --------------------------------------------------------------------
@@ -80,7 +121,7 @@
         // --------------------------------------------------------------------
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-app.js";
         import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, query, where, orderBy, limit, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, query, where, getDocs, doc, getDoc, updateDoc, serverTimestamp, Timestamp } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-firestore.js";
         import { getAI, getGenerativeModel } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-ai.js";
 
         // --------------------------------------------------------------------
@@ -116,12 +157,20 @@
         const fileInput = document.getElementById('fileInput');
         const uploadButton = document.getElementById('uploadButton');
         const uploadStatus = document.getElementById('uploadStatus');
+        const reviewContainer = document.getElementById('reviewContainer');
+        const analyzeWeekButton = document.getElementById('analyzeWeekButton');
+        const findStuckTaskButton = document.getElementById('findStuckTaskButton');
+        const stuckTaskContainer = document.getElementById('stuckTaskContainer');
+        const viewSwitcher = document.getElementById('view-switcher');
         const responseContainer = document.getElementById('responseContainer');
+        const suggestionModal = document.getElementById('suggestionModal');
+        const modalContent = document.getElementById('modal-content');
+        const closeModalButton = document.getElementById('closeModalButton');
 
         // --------------------------------------------------------------------
-        // SECTION 4: INITIALIZATION AND MAIN LOGIC
+        // SECTION 4: GLOBAL STATE & INITIALIZATION
         // --------------------------------------------------------------------
-        let auth, db, aiModelJson, aiModelText;
+        let auth, db, aiModelJson, aiModelText, currentPlan = null, currentView = 'checklist';
 
         try {
             const app = initializeApp(firebaseConfig);
@@ -133,7 +182,6 @@
             
             console.log("Firebase services initialized successfully.");
             setupApplicationLogic();
-
         } catch (error) {
             console.error("FIREBASE INITIALIZATION FAILED:", error);
             authContent.style.display = 'none';
@@ -160,31 +208,98 @@
                 authMessage.className = `text-center font-medium mt-4 h-auto ${isError ? 'text-red-600' : 'text-green-600'}`;
             };
             
-            const renderPlan = (tasks) => {
+            const renderChecklist = (planId, tasks) => {
                 responseContainer.innerHTML = '';
-                if (!tasks || tasks.length === 0) {
-                    responseContainer.innerHTML = '<p>Kế hoạch này không có công việc nào.</p>'; return;
-                }
                 const taskList = document.createElement('ul');
                 taskList.className = 'space-y-4 text-left w-full';
+                taskList.dataset.planId = planId;
                 tasks.forEach(task => {
+                    const isDone = task.status === 'done';
                     const listItem = document.createElement('li');
-                    listItem.className = 'p-4 bg-white border border-gray-200 rounded-lg shadow-sm';
-                    listItem.innerHTML = `<div class="flex items-start"><input type="checkbox" class="h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 mt-1 mr-4"><div><p class="font-semibold text-slate-800">${task.title}</p><p class="text-sm text-gray-500 mt-1"><em>Gợi ý: ${task.suggestion}</em></p></div></div>`;
+                    listItem.className = `p-4 bg-white border border-gray-200 rounded-lg shadow-sm transition-colors ${isDone ? 'task-done' : ''}`;
+                    listItem.innerHTML = `
+                        <div class="flex items-start justify-between">
+                            <div class="flex items-start">
+                                <input type="checkbox" class="h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 mt-1 mr-4 cursor-pointer" data-task-id="${task.id}" ${isDone ? 'checked' : ''}>
+                                <div>
+                                    <p class="font-semibold text-slate-800">${task.title}</p>
+                                    <p class="text-sm text-gray-500 mt-1"><em>Gợi ý: ${task.suggestion}</em></p>
+                                </div>
+                            </div>
+                            <button class="ai-suggestion-btn p-1 ml-4 text-gray-400 hover:text-blue-600 transition-colors" data-task-title="${task.title}">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v2H7a1 1 0 100 2h2v2a1 1 0 102 0v-2h2a1 1 0 100-2h-2V7z" clip-rule="evenodd" /></svg>
+                            </button>
+                        </div>`;
                     taskList.appendChild(listItem);
                 });
                 responseContainer.appendChild(taskList);
             };
 
+            const renderKanban = (planId, tasks) => {
+                responseContainer.innerHTML = `
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 w-full text-left">
+                        <div class="bg-gray-100 p-4 rounded-lg">
+                            <h3 class="font-bold text-lg mb-4 text-slate-700">Cần làm</h3>
+                            <ul class="kanban-column space-y-4" data-status="todo"></ul>
+                        </div>
+                        <div class="bg-gray-100 p-4 rounded-lg">
+                            <h3 class="font-bold text-lg mb-4 text-slate-700">Đang làm</h3>
+                            <ul class="kanban-column space-y-4" data-status="inprogress"></ul>
+                        </div>
+                        <div class="bg-gray-100 p-4 rounded-lg">
+                            <h3 class="font-bold text-lg mb-4 text-slate-700">Đã xong</h3>
+                            <ul class="kanban-column space-y-4" data-status="done"></ul>
+                        </div>
+                    </div>
+                `;
+                responseContainer.dataset.planId = planId;
+                tasks.forEach(task => {
+                    const column = responseContainer.querySelector(`[data-status="${task.status}"]`);
+                    if (column) {
+                        const listItem = document.createElement('li');
+                        listItem.className = `p-4 bg-white rounded-lg shadow-sm cursor-grab active:cursor-grabbing ${task.status === 'done' ? 'task-done' : ''}`;
+                        listItem.draggable = true;
+                        listItem.dataset.taskId = task.id;
+                        listItem.innerHTML = `
+                            <div class="flex justify-between items-start">
+                                <div>
+                                    <p class="font-semibold text-slate-800">${task.title}</p>
+                                    <p class="text-sm text-gray-500 mt-1"><em>${task.suggestion}</em></p>
+                                </div>
+                                <button class="ai-suggestion-btn p-1 text-gray-400 hover:text-blue-600 transition-colors" data-task-title="${task.title}">
+                                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v2H7a1 1 0 100 2h2v2a1 1 0 102 0v-2h2a1 1 0 100-2h-2V7z" clip-rule="evenodd" /></svg>
+                                </button>
+                            </div>`;
+                        column.appendChild(listItem);
+                    }
+                });
+            };
+
+            const renderPlan = () => {
+                if (!currentPlan) {
+                    responseContainer.innerHTML = '<p>Bạn chưa có kế hoạch nào. Hãy tạo một cái mới!</p>';
+                    return;
+                }
+                if (currentView === 'checklist') {
+                    renderChecklist(currentPlan.id, currentPlan.tasks);
+                } else {
+                    renderKanban(currentPlan.id, currentPlan.tasks);
+                }
+            };
+
             const loadLatestPlan = async (userId) => {
                 responseContainer.innerHTML = '<p>Đang tải kế hoạch gần nhất...</p>';
                 try {
-                    const q = query(collection(db, "plans"), where("userId", "==", userId), orderBy("createdAt", "desc"), limit(1));
+                    const q = query(collection(db, "plans"), where("userId", "==", userId));
                     const querySnapshot = await getDocs(q);
-                    if (!querySnapshot.empty) { 
-                        renderPlan(querySnapshot.docs[0].data().tasks); 
-                    } else { 
-                        responseContainer.innerHTML = '<p>Bạn chưa có kế hoạch nào. Hãy tạo một cái mới!</p>'; 
+                    if (!querySnapshot.empty) {
+                        const plans = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        plans.sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
+                        currentPlan = plans[0];
+                        renderPlan();
+                    } else {
+                        currentPlan = null;
+                        renderPlan();
                     }
                 } catch (error) { 
                     console.error("Error loading plan:", error); 
@@ -192,7 +307,23 @@
                 }
             };
             
-            // --- Auth State Observer ---
+            const updateTaskStatus = async (planId, taskId, newStatus) => {
+                try {
+                    const planRef = doc(db, "plans", planId);
+                    const updatedTasks = currentPlan.tasks.map(task => 
+                        task.id === taskId ? { ...task, status: newStatus } : task
+                    );
+                    await updateDoc(planRef, { tasks: updatedTasks });
+                    currentPlan.tasks = updatedTasks;
+                    console.log(`Task ${taskId} status updated to ${newStatus}`);
+                } catch (error) {
+                    console.error("Error updating task status:", error);
+                    alert("Không thể cập nhật trạng thái công việc.");
+                    renderPlan();
+                }
+            };
+
+            // --- Event Listeners ---
             onAuthStateChanged(auth, user => {
                 if (user) {
                     authContainer.style.display = 'none'; 
@@ -206,7 +337,6 @@
                 }
             });
 
-            // --- Event Listeners ---
             registerButton.addEventListener('click', async () => {
                 showAuthMessage(''); 
                 try { 
@@ -246,9 +376,12 @@
                     const finalPrompt = `Bạn là một chuyên gia quản lý dự án xuất sắc. Hãy phân rã mục tiêu sau đây của người dùng thành một đối tượng JSON: "${userGoal}".\n\n${contextText}\n\nDựa vào mục tiêu và ngữ cảnh trên (nếu có), hãy tạo ra một kế hoạch chi tiết. Đối tượng JSON phải có một khóa duy nhất là "tasks". Giá trị của "tasks" là một mảng các đối tượng, mỗi đối tượng có hai thuộc tính: 1. "title" (một chuỗi string, là một công việc cụ thể, có thể hành động được) và 2. "suggestion" (một chuỗi string, là một gợi ý hữu ích cho công việc đó). Toàn bộ nội dung của "title" và "suggestion" phải bằng tiếng Việt.`;
                     
                     const result = await aiModelJson.generateContent(finalPrompt);
-                    const tasks = JSON.parse(result.response.text()).tasks;
-                    await addDoc(collection(db, "plans"), { userId: user.uid, goal: userGoal, tasks: tasks, createdAt: serverTimestamp() });
-                    renderPlan(tasks); 
+                    const tasksFromAI = JSON.parse(result.response.text()).tasks;
+                    const tasksWithDetails = tasksFromAI.map(task => ({ ...task, id: crypto.randomUUID(), status: 'todo' }));
+                    
+                    const docRef = await addDoc(collection(db, "plans"), { userId: user.uid, goal: userGoal, tasks: tasksWithDetails, createdAt: serverTimestamp() });
+                    currentPlan = { id: docRef.id, tasks: tasksWithDetails, createdAt: Timestamp.now() };
+                    renderPlan(); 
                     statusMessage.textContent = "AI đã lập kế hoạch dựa trên ngữ cảnh thành công!";
                 } catch (error) { 
                     console.error("AI Planning Error:", error); 
@@ -301,6 +434,142 @@
                     uploadStatus.textContent = `Lỗi: ${error.message}`; 
                 } finally { 
                     uploadButton.disabled = false; 
+                }
+            });
+            
+            viewSwitcher.addEventListener('click', (e) => {
+                const button = e.target.closest('button');
+                if (!button || !currentPlan) return;
+                currentView = button.dataset.view;
+                viewSwitcher.querySelectorAll('button').forEach(btn => {
+                    btn.classList.remove('bg-white', 'text-blue-600', 'shadow');
+                    btn.classList.add('text-gray-600');
+                });
+                button.classList.add('bg-white', 'text-blue-600', 'shadow');
+                button.classList.remove('text-gray-600');
+                renderPlan();
+            });
+
+            responseContainer.addEventListener('click', async (event) => {
+                const suggestionBtn = event.target.closest('.ai-suggestion-btn');
+                if (suggestionBtn) {
+                    const taskTitle = suggestionBtn.dataset.taskTitle;
+                    modalContent.innerHTML = '<div class="spinner mx-auto"></div>';
+                    suggestionModal.classList.remove('hidden');
+
+                    try {
+                        const suggestionPrompt = `Bạn là một trợ lý công việc chuyên nghiệp. Hãy đưa ra các bước chi tiết, khả thi để thực hiện công việc sau: "${taskTitle}". Trình bày dưới dạng các gạch đầu dòng, sử dụng ngôn ngữ tiếng Việt.`;
+                        const result = await aiModelText.generateContent(suggestionPrompt);
+                        modalContent.innerHTML = `<div class="text-left whitespace-pre-line">${result.response.text()}</div>`;
+                    } catch (error) {
+                        console.error("Suggestion error:", error);
+                        modalContent.textContent = "Lỗi khi lấy gợi ý từ AI.";
+                    }
+                }
+            });
+
+            responseContainer.addEventListener('change', async (event) => {
+                if (event.target.matches('input[type="checkbox"]')) {
+                    const taskId = event.target.dataset.taskId;
+                    const planId = currentPlan.id;
+                    const newStatus = event.target.checked ? 'done' : 'todo';
+                    event.target.closest('li').classList.toggle('task-done', event.target.checked);
+                    await updateTaskStatus(planId, taskId, newStatus);
+                }
+            });
+            
+            let draggedItem = null;
+            responseContainer.addEventListener('dragstart', (e) => {
+                if(e.target.matches('li[draggable="true"]')) {
+                    draggedItem = e.target;
+                    setTimeout(() => e.target.classList.add('dragging'), 0);
+                }
+            });
+            responseContainer.addEventListener('dragend', (e) => {
+                if (draggedItem) {
+                    draggedItem.classList.remove('dragging');
+                    draggedItem = null;
+                }
+            });
+            responseContainer.addEventListener('dragover', (e) => { e.preventDefault(); });
+            responseContainer.addEventListener('drop', (e) => {
+                e.preventDefault();
+                const column = e.target.closest('.kanban-column');
+                if (column && draggedItem) {
+                    const newStatus = column.dataset.status;
+                    const taskId = draggedItem.dataset.taskId;
+                    const oldStatus = currentPlan.tasks.find(t=>t.id===taskId)?.status
+                    if (newStatus !== oldStatus) {
+                        column.appendChild(draggedItem);
+                        updateTaskStatus(currentPlan.id, taskId, newStatus);
+                    }
+                }
+            });
+
+            analyzeWeekButton.addEventListener('click', async () => {
+                const user = auth.currentUser;
+                if (!user) { reviewContainer.textContent = "Vui lòng đăng nhập."; return; }
+                reviewContainer.innerHTML = '<div class="spinner"></div>';
+                analyzeWeekButton.disabled = true;
+                try {
+                    const sevenDaysAgo = new Date();
+                    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+                    
+                    const q = query(collection(db, "plans"), where("userId", "==", user.uid));
+                    const querySnapshot = await getDocs(q);
+                    
+                    if (querySnapshot.empty) { reviewContainer.textContent = "Không tìm thấy hoạt động nào."; return; }
+
+                    const recentDocs = querySnapshot.docs.filter(doc => doc.data().createdAt && doc.data().createdAt.toDate() >= sevenDaysAgo);
+                    if (recentDocs.length === 0) { reviewContainer.textContent = "Không tìm thấy hoạt động nào trong 7 ngày qua."; return; }
+
+                    let completedTasks = [], pendingTasks = [];
+                    recentDocs.forEach(doc => {
+                        const tasks = doc.data().tasks || [];
+                        tasks.forEach(task => { (task.status === 'done' ? completedTasks : pendingTasks).push(task.title); });
+                    });
+
+                    if (completedTasks.length === 0 && pendingTasks.length === 0) { reviewContainer.textContent = "Bạn chưa có công việc nào trong tuần qua."; return; }
+
+                    const analysisPrompt = `Bạn là một trợ lý hiệu suất thấu cảm và chuyên nghiệp. Dưới đây là dữ liệu công việc của người dùng trong 7 ngày qua.\n\nCác công việc ĐÃ HOÀN THÀNH:\n- ${completedTasks.join('\n- ') || 'Không có'}\n\nCác công việc CÒN DANG DỞ:\n- ${pendingTasks.join('\n- ') || 'Không có'}\n\nDựa vào dữ liệu trên, hãy viết một bản nhận xét ngắn gọn (khoảng 3-4 câu) bằng tiếng Việt theo cấu trúc sau:\n1. Bắt đầu bằng một lời khen ngợi hoặc ghi nhận những gì họ đã hoàn thành.\n2. Đưa ra một nhận định tinh tế về các công việc còn lại.\n3. Kết thúc bằng một gợi ý cụ thể, có thể hành động được để giúp họ có một tuần làm việc tới hiệu quả hơn.\nGiọng văn cần tích cực, động viên và mang tính xây dựng.`;
+                    const result = await aiModelText.generateContent(analysisPrompt);
+                    reviewContainer.textContent = result.response.text();
+                } catch (error) {
+                    console.error("Analysis Error:", error);
+                    reviewContainer.textContent = "Rất tiếc, đã có lỗi xảy ra trong quá trình phân tích.";
+                } finally {
+                    analyzeWeekButton.disabled = false;
+                }
+            });
+
+            findStuckTaskButton.addEventListener('click', async () => {
+                const user = auth.currentUser;
+                if (!user) { stuckTaskContainer.textContent = "Vui lòng đăng nhập."; return; }
+                if (!currentPlan) { stuckTaskContainer.textContent = "Không có kế hoạch nào đang được hiển thị."; return; }
+
+                stuckTaskContainer.innerHTML = '<div class="spinner"></div>';
+                findStuckTaskButton.disabled = true;
+                try {
+                    const stuckTask = currentPlan.tasks.find(task => task.status !== 'done');
+                    if (!stuckTask) { stuckTaskContainer.textContent = "Chúc mừng! Bạn đã hoàn thành tất cả công việc."; return; }
+
+                    const coachingPrompt = `Bạn là một chuyên gia gỡ rối công việc, một người coach hiệu suất. Một người dùng đang gặp khó khăn và có thể đang trì hoãn công việc sau: "${stuckTask.title}".\n\nHãy đưa ra 3 gợi ý cụ thể, ngắn gọn, và có thể hành động được ngay để giúp họ bắt đầu công việc này một cách dễ dàng nhất. Bắt đầu bằng một câu động viên. Trình bày các gợi ý dưới dạng gạch đầu dòng.\nSử dụng ngôn ngữ tiếng Việt, giọng điệu tích cực và hỗ trợ.`;
+                    const result = await aiModelText.generateContent(coachingPrompt);
+                    stuckTaskContainer.innerHTML = `<div class="text-left w-full"><p class="font-semibold">Có vẻ bạn đang gặp khó ở công việc:</p><p class="italic p-2 bg-amber-100 rounded-md my-2">"${stuckTask.title}"</p><p class="font-semibold mt-4">Đây là một vài gợi ý từ AI để giúp bạn:</p><div class="mt-2 whitespace-pre-line">${result.response.text()}</div></div>`;
+                } catch (error) {
+                    console.error("Stuck Task Analysis Error:", error);
+                    stuckTaskContainer.textContent = "Rất tiếc, đã có lỗi xảy ra.";
+                } finally {
+                    findStuckTaskButton.disabled = false;
+                }
+            });
+            
+            closeModalButton.addEventListener('click', () => {
+                suggestionModal.classList.add('hidden');
+            });
+            window.addEventListener('click', (event) => {
+                if (event.target == suggestionModal) {
+                    suggestionModal.classList.add('hidden');
                 }
             });
             
