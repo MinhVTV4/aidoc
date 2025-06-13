@@ -34,7 +34,7 @@
         }
         .kanban-column { min-height: 200px; }
         .dragging { opacity: 0.5; transform: rotate(2deg); }
-        #suggestionModal.hidden { display: none; }
+        .modal.hidden { display: none; }
         
         .task-card {
             border-left-width: 4px;
@@ -76,14 +76,16 @@
 
     <!-- Main App Container -->
     <div id="appContainer" class="w-full max-w-4xl bg-white p-8 rounded-xl shadow-lg" style="display: none;">
-        <div id="userStatus" class="text-center mb-6 p-3 bg-gray-100 rounded-md flex justify-between items-center"></div>
+        <div id="userStatus" class="text-center mb-6 p-3 bg-gray-100 rounded-md flex justify-between items-center">
+             <!-- User info is injected here -->
+        </div>
         
         <div class="mb-10">
             <h1 class="text-3xl font-bold text-slate-800 mb-2">Giao việc cho AI</h1>
-            <p class="text-gray-500 mb-6">Nhập một mục tiêu lớn, AI sẽ tự động tham khảo các tài liệu gần đây của bạn để đưa ra kế hoạch tốt nhất.</p>
+            <p class="text-gray-500 mb-6">Nhập một mục tiêu lớn để tạo một kế hoạch mới. Kế hoạch cũ sẽ được tự động lưu lại.</p>
             <textarea id="promptInput" rows="4" placeholder="Ví dụ: Lên kế hoạch ra mắt một website portfolio trong 3 tuần tới..." class="w-full p-3 bg-gray-50 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none transition"></textarea>
             <button id="sendPromptButton" class="w-full py-3 px-4 mt-4 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700 transition-colors">
-                <span id="buttonText">Lập Kế Hoạch Thông Minh</span>
+                <span id="buttonText">Lập Kế Hoạch Mới</span>
             </button>
             <p id="statusMessage" class="text-center font-medium mt-4 h-5"></p>
         </div>
@@ -129,8 +131,8 @@
         </div>
     </div>
 
-    <!-- Suggestion Modal -->
-    <div id="suggestionModal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center">
+    <!-- Modals -->
+    <div id="suggestionModal" class="modal hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center z-50">
         <div class="relative mx-auto p-5 border w-full max-w-2xl shadow-lg rounded-md bg-white">
             <div class="mt-3 text-center">
                 <h3 class="text-lg leading-6 font-medium text-gray-900">Gợi ý từ AI</h3>
@@ -141,6 +143,15 @@
             </div>
         </div>
     </div>
+    <div id="planLibraryModal" class="modal hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center z-50">
+        <div class="relative mx-auto p-5 border w-full max-w-3xl shadow-lg rounded-md bg-white">
+            <div class="flex justify-between items-center border-b pb-3 mb-3">
+                <h3 class="text-lg leading-6 font-medium text-gray-900">Thư viện Kế hoạch</h3>
+                <button id="closePlanLibraryButton" class="text-gray-400 hover:text-gray-600 text-2xl font-bold">&times;</button>
+            </div>
+            <div id="planLibraryContent" class="max-h-96 overflow-y-auto"></div>
+        </div>
+    </div>
 
 
     <script type="module">
@@ -149,7 +160,8 @@
         // --------------------------------------------------------------------
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-app.js";
         import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, query, where, getDocs, doc, getDoc, updateDoc, serverTimestamp, Timestamp } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-firestore.js";
+        // **FIXED**: Added 'orderBy' and 'limit' to the import list
+        import { getFirestore, collection, addDoc, query, where, orderBy, limit, getDocs, doc, getDoc, updateDoc, serverTimestamp, Timestamp, writeBatch } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-firestore.js";
         import { getAI, getGenerativeModel } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-ai.js";
 
         // --------------------------------------------------------------------
@@ -197,7 +209,11 @@
         const modalContent = document.getElementById('modal-content');
         const closeModalButton = document.getElementById('closeModalButton');
         const confettiCanvas = document.getElementById('confettiCanvas');
-
+        const planLibraryButton = document.getElementById('planLibraryButton');
+        const planLibraryModal = document.getElementById('planLibraryModal');
+        const planLibraryContent = document.getElementById('planLibraryContent');
+        const closePlanLibraryButton = document.getElementById('closePlanLibraryButton');
+        
         // --------------------------------------------------------------------
         // SECTION 4: GLOBAL STATE & INITIALIZATION
         // --------------------------------------------------------------------
@@ -244,7 +260,6 @@
                 const taskList = document.createElement('ul');
                 taskList.className = 'space-y-4 text-left w-full';
                 taskList.dataset.planId = planId;
-                
                 tasks.sort((a, b) => (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0) || (a.id && b.id ? a.id.localeCompare(b.id) : 0));
 
                 tasks.forEach(task => {
@@ -338,29 +353,42 @@
 
             const renderPlan = () => {
                 if (!currentPlan) {
-                    responseContainer.innerHTML = '<p>Bạn chưa có kế hoạch nào. Hãy tạo một cái mới!</p>'; return;
+                    responseContainer.innerHTML = '<p>Bạn chưa có kế hoạch nào. Hãy tạo một cái mới!</p>';
+                    return;
                 }
-                if (currentView === 'checklist') { renderChecklist(currentPlan.id, currentPlan.tasks); } 
-                else { renderKanban(currentPlan.id, currentPlan.tasks); }
+                if (currentView === 'checklist') {
+                    renderChecklist(currentPlan.id, currentPlan.tasks);
+                } else {
+                    renderKanban(currentPlan.id, currentPlan.tasks);
+                }
             };
 
-            const loadLatestPlan = async (userId) => {
-                responseContainer.innerHTML = '<p>Đang tải kế hoạch gần nhất...</p>';
+            const loadActivePlan = async (userId) => {
+                responseContainer.innerHTML = '<p>Đang tải kế hoạch...</p>';
                 try {
-                    const q = query(collection(db, "plans"), where("userId", "==", userId));
+                    const q = query(collection(db, "plans"), where("userId", "==", userId), where("isActive", "==", true), limit(1));
                     const querySnapshot = await getDocs(q);
                     if (!querySnapshot.empty) {
-                        const plans = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                        plans.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
-                        currentPlan = plans[0];
+                        const activePlanDoc = querySnapshot.docs[0];
+                        currentPlan = { id: activePlanDoc.id, ...activePlanDoc.data() };
                         renderPlan();
                     } else {
-                        currentPlan = null;
+                        // If no active plan, try to load the latest one
+                        const latestQuery = query(collection(db, "plans"), where("userId", "==", userId), orderBy("createdAt", "desc"), limit(1));
+                        const latestSnapshot = await getDocs(latestQuery);
+                        if (!latestSnapshot.empty) {
+                            const latestPlanDoc = latestSnapshot.docs[0];
+                            currentPlan = { id: latestPlanDoc.id, ...latestPlanDoc.data() };
+                            // Make it active
+                            await updateDoc(doc(db, "plans", currentPlan.id), { isActive: true });
+                        } else {
+                            currentPlan = null;
+                        }
                         renderPlan();
                     }
                 } catch (error) { 
-                    console.error("Error loading plan:", error); 
-                    responseContainer.innerHTML = '<p class="text-red-600">Không thể tải kế hoạch.</p>'; 
+                    console.error("Error loading active plan:", error); 
+                    responseContainer.innerHTML = '<p class="text-red-600">Không thể tải kế hoạch hoạt động.</p>'; 
                 }
             };
             
@@ -388,7 +416,7 @@
                     renderPlan();
                 }
             };
-
+            
             const togglePinStatus = async (planId, taskId) => {
                 try {
                     const planRef = doc(db, "plans", planId);
@@ -405,15 +433,22 @@
                     alert("Không thể ghim công việc.");
                 }
             };
-
+            
             // --- Event Listeners ---
             onAuthStateChanged(auth, user => {
                 if (user) {
                     authContainer.style.display = 'none'; 
                     appContainer.style.display = 'block';
-                    userStatus.innerHTML = `<span class="text-gray-700">Xin chào, <strong class="font-semibold text-slate-800">${user.email}</strong></span><button id="logoutButton" class="py-1 px-3 text-sm bg-red-600 text-white font-semibold rounded-md hover:bg-red-700 transition-colors">Đăng xuất</button>`;
+                    userStatus.innerHTML = `
+                        <span class="text-gray-700">Xin chào, <strong class="font-semibold text-slate-800">${user.email}</strong></span>
+                        <div>
+                            <button id="planLibraryButton" class="text-sm font-semibold text-blue-600 hover:text-blue-800 mr-4">Thư viện Kế hoạch</button>
+                            <button id="logoutButton" class="py-1 px-3 text-sm bg-red-600 text-white font-semibold rounded-md hover:bg-red-700 transition-colors">Đăng xuất</button>
+                        </div>
+                    `;
                     document.getElementById('logoutButton').addEventListener('click', () => signOut(auth));
-                    loadLatestPlan(user.uid);
+                    document.getElementById('planLibraryButton').addEventListener('click', openPlanLibrary);
+                    loadActivePlan(user.uid);
                 } else {
                     authContainer.style.display = 'block'; 
                     appContainer.style.display = 'none';
@@ -442,8 +477,12 @@
             sendPromptButton.addEventListener("click", async () => {
                 const user = auth.currentUser; if (!user) return;
                 const userGoal = promptInput.value.trim(); if (!userGoal) { statusMessage.textContent = "Vui lòng nhập mục tiêu."; return; }
-                statusMessage.textContent = "AI đang tìm tài liệu và suy nghĩ..."; sendPromptButton.disabled = true; buttonText.textContent = "Đang xử lý..."; responseContainer.innerHTML = '<div class="spinner"></div>';
+                statusMessage.textContent = "AI đang suy nghĩ..."; sendPromptButton.disabled = true; buttonText.textContent = "Đang xử lý..."; responseContainer.innerHTML = '<div class="spinner"></div>';
                 try {
+                    if (currentPlan) {
+                        const oldPlanRef = doc(db, "plans", currentPlan.id);
+                        await updateDoc(oldPlanRef, { isActive: false });
+                    }
                     let contextText = "Không có ngữ cảnh bổ sung.";
                     try {
                         const knowledgeQuery = query(collection(db, "knowledge_base"), where("userId", "==", user.uid), orderBy("createdAt", "desc"), limit(5));
@@ -455,15 +494,14 @@
                     } catch (e) { console.warn("Could not retrieve knowledge base context:", e); }
 
                     const finalPrompt = `Bạn là một chuyên gia quản lý dự án xuất sắc. Hãy phân rã mục tiêu sau của người dùng thành một đối tượng JSON: "${userGoal}".\n\n${contextText}\n\nDựa vào mục tiêu và ngữ cảnh trên (nếu có), hãy tạo ra một kế hoạch chi tiết. Đối tượng JSON phải có một khóa duy nhất là "tasks". Giá trị của "tasks" là một mảng các đối tượng. Mỗi đối tượng phải có bốn thuộc tính: 1. "title" (string), 2. "suggestion" (string), 3. "priority" (string, một trong ba giá trị: 'high', 'medium', hoặc 'low'), và 4. "dueDate" (string, định dạng YYYY-MM-DD, là một ngày hết hạn hợp lý trong tương lai; nếu không xác định được, trả về null). Toàn bộ nội dung phải bằng tiếng Việt.`;
-                    
                     const result = await aiModelJson.generateContent(finalPrompt);
                     const tasksFromAI = JSON.parse(result.response.text()).tasks;
                     const tasksWithDetails = tasksFromAI.map(task => ({ ...task, id: crypto.randomUUID(), status: 'todo', isPinned: false }));
                     
-                    const docRef = await addDoc(collection(db, "plans"), { userId: user.uid, goal: userGoal, tasks: tasksWithDetails, createdAt: serverTimestamp() });
-                    currentPlan = { id: docRef.id, tasks: tasksWithDetails, createdAt: Timestamp.now(), goal: userGoal };
+                    const docRef = await addDoc(collection(db, "plans"), { userId: user.uid, goal: userGoal, tasks: tasksWithDetails, createdAt: serverTimestamp(), isActive: true });
+                    currentPlan = { id: docRef.id, tasks: tasksWithDetails, createdAt: Timestamp.now(), goal: userGoal, isActive: true };
                     renderPlan(); 
-                    statusMessage.textContent = "AI đã lập kế hoạch dựa trên ngữ cảnh thành công!";
+                    statusMessage.textContent = "Đã tạo và kích hoạt kế hoạch mới!";
                 } catch (error) { 
                     console.error("AI Planning Error:", error); 
                     statusMessage.textContent = "Lỗi khi tạo kế hoạch."; 
@@ -520,14 +558,12 @@
                         modalContent.innerHTML = `<div class="text-left whitespace-pre-line">${result.response.text()}</div>`;
                     } catch (error) { console.error("Suggestion error:", error); modalContent.textContent = "Lỗi khi lấy gợi ý từ AI."; }
                 }
-
                 const moveBtn = event.target.closest('.move-task-btn');
                 if (moveBtn) {
                     const taskId = moveBtn.dataset.taskId;
                     const targetStatus = moveBtn.dataset.targetStatus;
                     await updateTaskStatus(currentPlan.id, taskId, targetStatus);
                 }
-
                 const pinBtn = event.target.closest('.pin-btn');
                 if (pinBtn) {
                     const taskId = pinBtn.dataset.taskId;
@@ -571,23 +607,33 @@
             });
 
             analyzeWeekButton.addEventListener('click', async () => {
-                const user = auth.currentUser; if (!user) { reviewContainer.textContent = "Vui lòng đăng nhập."; return; }
+                const user = auth.currentUser;
+                if (!user) { reviewContainer.textContent = "Vui lòng đăng nhập."; return; }
                 reviewContainer.innerHTML = '<div class="spinner"></div>';
                 analyzeWeekButton.disabled = true;
                 try {
-                    const sevenDaysAgo = new Date(); sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+                    const sevenDaysAgo = new Date();
+                    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+                    
                     const q = query(collection(db, "plans"), where("userId", "==", user.uid));
                     const querySnapshot = await getDocs(q);
-                    if (querySnapshot.empty) { reviewContainer.textContent = "Không tìm thấy hoạt động nào."; analyzeWeekButton.disabled = false; return; }
+                    
+                    if (querySnapshot.empty) { reviewContainer.textContent = "Không tìm thấy hoạt động nào."; return; }
                     const recentDocs = querySnapshot.docs.filter(doc => doc.data().createdAt && doc.data().createdAt.toDate() >= sevenDaysAgo);
-                    if (recentDocs.length === 0) { reviewContainer.textContent = "Không tìm thấy hoạt động nào trong 7 ngày qua."; analyzeWeekButton.disabled = false; return; }
+                    if (recentDocs.length === 0) { reviewContainer.textContent = "Không tìm thấy hoạt động nào trong 7 ngày qua."; return; }
+
                     let completedTasks = [], pendingTasks = [];
-                    recentDocs.forEach(doc => { const tasks = doc.data().tasks || []; tasks.forEach(task => { (task.status === 'done' ? completedTasks : pendingTasks).push(task.title); }); });
-                    if (completedTasks.length === 0 && pendingTasks.length === 0) { reviewContainer.textContent = "Bạn chưa có công việc nào trong tuần qua."; analyzeWeekButton.disabled = false; return; }
-                    const analysisPrompt = `Bạn là một trợ lý hiệu suất thấu cảm... (prompt is the same)`;
+                    recentDocs.forEach(doc => {
+                        const tasks = doc.data().tasks || [];
+                        tasks.forEach(task => { (task.status === 'done' ? completedTasks : pendingTasks).push(task.title); });
+                    });
+
+                    if (completedTasks.length === 0 && pendingTasks.length === 0) { reviewContainer.textContent = "Bạn chưa có công việc nào trong tuần qua."; return; }
+
+                    const analysisPrompt = `Bạn là một trợ lý hiệu suất... (prompt is the same)`;
                     const result = await aiModelText.generateContent(analysisPrompt);
                     reviewContainer.textContent = result.response.text();
-                } catch (error) { console.error("Analysis Error:", error); reviewContainer.textContent = "Rất tiếc, đã có lỗi xảy ra trong quá trình phân tích."; } 
+                } catch (error) { console.error("Analysis Error:", error); reviewContainer.textContent = "Rất tiếc, đã có lỗi xảy ra."; } 
                 finally { analyzeWeekButton.disabled = false; }
             });
 
@@ -602,7 +648,7 @@
                         .filter(task => task.status === 'inprogress' && task.statusUpdatedAt)
                         .sort((a, b) => (a.statusUpdatedAt?.toMillis() || 0) - (b.statusUpdatedAt?.toMillis() || 0));
                     const stuckTask = inProgressTasks.length > 0 ? inProgressTasks[0] : null;
-                    if (!stuckTask) { stuckTaskContainer.textContent = "Tuyệt vời! Không có công việc nào đang bị trì hoãn trong cột 'Đang làm'."; return; }
+                    if (!stuckTask) { stuckTaskContainer.textContent = "Tuyệt vời! Không có công việc nào đang bị trì hoãn."; return; }
                     const coachingPrompt = `Bạn là một chuyên gia gỡ rối công việc... (prompt is the same)`;
                     const result = await aiModelText.generateContent(coachingPrompt);
                     stuckTaskContainer.innerHTML = `<div class="text-left w-full">... (display logic is the same) ...</div>`;
@@ -619,10 +665,10 @@
                     let historyText = ""; let knowledgeText = "";
                     const plansQuery = query(collection(db, "plans"), where("userId", "==", user.uid));
                     const plansSnapshot = await getDocs(plansQuery);
-                    if (!plansSnapshot.empty) { /* ... */ } else { historyText = "LỊCH SỬ KẾ HOẠCH VÀ CÔNG VIỆC: Chưa có dữ liệu."; }
+                    if (!plansSnapshot.empty) { /* ... */ } else { historyText = "LỊCH SỬ KẾ HOẠCH: Chưa có dữ liệu."; }
                     const knowledgeQuery = query(collection(db, "knowledge_base"), where("userId", "==", user.uid));
                     const knowledgeSnapshot = await getDocs(knowledgeQuery);
-                    if (!knowledgeSnapshot.empty) { /* ... */ } else { knowledgeText = "KHO TRI THỨC (TÓM TẮT TÀI LIỆU): Chưa có dữ liệu."; }
+                    if (!knowledgeSnapshot.empty) { /* ... */ } else { knowledgeText = "KHO TRI THỨC: Chưa có dữ liệu."; }
                     const strategicPrompt = `Bạn là một nhà cố vấn chiến lược... (prompt is the same)`;
                     const result = await aiModelText.generateContent(strategicPrompt);
                     strategicReviewContainer.innerHTML = `<div class="text-left whitespace-pre-line">${result.response.text()}</div>`;
@@ -630,13 +676,68 @@
                 finally { strategicAdvisorButton.disabled = false; }
             });
 
+            const openPlanLibrary = async () => {
+                const user = auth.currentUser; if (!user) return;
+                planLibraryContent.innerHTML = '<div class="spinner mx-auto"></div>';
+                planLibraryModal.classList.remove('hidden');
+                try {
+                    const q = query(collection(db, "plans"), where("userId", "==", user.uid), orderBy("createdAt", "desc"));
+                    const querySnapshot = await getDocs(q);
+                    planLibraryContent.innerHTML = '';
+                    if (querySnapshot.empty) { planLibraryContent.textContent = "Bạn chưa có kế hoạch nào."; return; }
+                    
+                    const list = document.createElement('ul');
+                    list.className = 'space-y-2';
+                    querySnapshot.forEach(docSnap => {
+                        const plan = { id: docSnap.id, ...docSnap.data() };
+                        const item = document.createElement('li');
+                        item.className = `p-3 rounded-md flex justify-between items-center ${plan.isActive ? 'bg-blue-100' : 'bg-gray-100 hover:bg-gray-200'}`;
+                        item.innerHTML = `<div><p class="font-semibold">${plan.goal}</p><p class="text-sm text-gray-500">Tạo lúc: ${plan.createdAt.toDate().toLocaleDateString('vi-VN')}</p></div>
+                                          ${!plan.isActive ? `<button data-plan-id="${plan.id}" class="load-plan-btn px-3 py-1 text-sm bg-blue-500 text-white rounded-md hover:bg-blue-600">Kích hoạt</button>` : `<span class="px-3 py-1 text-sm font-semibold text-green-600">Đang hoạt động</span>`}`;
+                        list.appendChild(item);
+                    });
+                    planLibraryContent.appendChild(list);
+                } catch (error) { console.error("Error loading plan library:", error); planLibraryContent.textContent = "Lỗi khi tải thư viện kế hoạch."; }
+            };
+
+            planLibraryContent.addEventListener('click', async (e) => {
+                const button = e.target.closest('.load-plan-btn'); if (!button) return;
+                button.textContent = "Đang tải..."; button.disabled = true;
+                const newActivePlanId = button.dataset.planId;
+                const oldActivePlanId = currentPlan?.id;
+                try {
+                    const batch = writeBatch(db);
+                    if (oldActivePlanId) { batch.update(doc(db, "plans", oldActivePlanId), { isActive: false }); }
+                    batch.update(doc(db, "plans", newActivePlanId), { isActive: true });
+                    await batch.commit();
+                    await loadActivePlan(auth.currentUser.uid);
+                    planLibraryModal.classList.add('hidden');
+                } catch (error) {
+                    console.error("Error switching plans:", error); alert("Lỗi khi chuyển đổi kế hoạch.");
+                    button.textContent = "Kích hoạt"; button.disabled = false;
+                }
+            });
+
+            closePlanLibraryButton.addEventListener('click', () => { planLibraryModal.classList.add('hidden'); });
             closeModalButton.addEventListener('click', () => { suggestionModal.classList.add('hidden'); });
-            window.addEventListener('click', (event) => { if (event.target == suggestionModal) { suggestionModal.classList.add('hidden'); } });
+            window.addEventListener('click', (event) => { if (event.target == suggestionModal || event.target == planLibraryModal) { suggestionModal.classList.add('hidden'); planLibraryModal.classList.add('hidden'); } });
             
             // --- File Processing Helpers ---
             async function extractTextFromPdf(file) { /* ... */ }
             async function extractTextFromExcel(file) { /* ... */ }
             async function extractTextFromDocx(file) { /* ... */ }
+            
+            // --- Confetti Effect ---
+            const confettiCtx = confettiCanvas.getContext('2d');
+            let confettiParticles = [];
+            function triggerConfetti() {
+                if(!confettiCanvas || !confettiCtx) return;
+                const particleCount = 150;
+                confettiParticles = [];
+                for (let i = 0; i < particleCount; i++) { /* ... */ }
+                animateConfetti();
+            }
+            function animateConfetti() { /* ... */ }
         }
     </script>
 </body>
