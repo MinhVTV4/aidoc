@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Giám đốc Công Việc</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- JS Libraries for PDF, Excel, and DOCX -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+    
+    <!-- Custom Styles & Fonts -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border-left-color: #09f;
+            animation: spin 1s ease infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        input[type="file"]::file-selector-button {
+            @apply font-semibold bg-blue-50 text-blue-700 border-0 mr-4 px-4 py-2 rounded-md cursor-pointer hover:bg-blue-100 transition-colors;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex flex-col items-center justify-center min-h-screen p-4">
+
+    <!-- Authentication Container -->
+    <div id="authContainer" class="w-full max-w-md bg-white p-8 rounded-xl shadow-lg">
+        <div id="initialization-error" class="hidden"></div>
+        <div id="auth-content">
+            <h1 class="text-3xl font-bold text-slate-800 text-center mb-2">Chào mừng bạn</h1>
+            <p class="text-center text-gray-500 mb-8">Đăng nhập để AI quản lý công việc cho bạn</p>
+            <input type="email" id="emailInput" placeholder="Email" class="w-full p-3 mb-4 bg-gray-50 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none transition">
+            <input type="password" id="passwordInput" placeholder="Mật khẩu" class="w-full p-3 mb-4 bg-gray-50 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none transition">
+            <button id="loginButton" class="w-full py-3 px-4 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700 transition-colors">Đăng nhập</button>
+            <button id="registerButton" class="w-full py-3 px-4 mt-2 bg-gray-600 text-white font-semibold rounded-md hover:bg-gray-700 transition-colors">Đăng ký tài khoản mới</button>
+            <p id="authMessage" class="text-center font-medium mt-4 h-auto"></p>
+        </div>
+    </div>
+
+    <!-- Main App Container -->
+    <div id="appContainer" class="w-full max-w-2xl bg-white p-8 rounded-xl shadow-lg" style="display: none;">
+        <div id="userStatus" class="text-center mb-6 p-3 bg-gray-100 rounded-md flex justify-between items-center"></div>
+        
+        <div class="mb-10">
+            <h1 class="text-3xl font-bold text-slate-800 mb-2">Giao việc cho AI</h1>
+            <p class="text-gray-500 mb-6">Nhập một mục tiêu lớn, AI sẽ tự động tham khảo các tài liệu gần đây của bạn để đưa ra kế hoạch tốt nhất.</p>
+            <textarea id="promptInput" rows="4" placeholder="Ví dụ: Lên kế hoạch ra mắt một website portfolio trong 3 tuần tới..." class="w-full p-3 bg-gray-50 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none transition"></textarea>
+            <button id="sendPromptButton" class="w-full py-3 px-4 mt-4 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700 transition-colors">
+                <span id="buttonText">Lập Kế Hoạch Thông Minh</span>
+            </button>
+            <p id="statusMessage" class="text-center font-medium mt-4 h-5"></p>
+        </div>
+        
+        <div class="border-t pt-8 mb-10">
+            <h1 class="text-3xl font-bold text-slate-800 mb-2">Xây dựng Cơ sở Tri thức</h1>
+            <p class="text-gray-500 mb-6">Tải lên file tài liệu (.txt, .pdf, .docx, .xlsx, .xls) để AI đọc, tóm tắt và ghi nhớ.</p>
+            <input type="file" id="fileInput" accept=".txt,.pdf,.xlsx,.xls,.docx" class="w-full text-sm text-slate-500 border border-gray-300 rounded-md cursor-pointer bg-gray-50 focus:outline-none">
+            <button id="uploadButton" class="w-full py-3 px-4 mt-4 bg-green-600 text-white font-semibold rounded-md hover:bg-green-700 transition-colors">Tóm tắt và Lưu trữ</button>
+            <p id="uploadStatus" class="text-center font-medium mt-4 h-5"></p>
+        </div>
+
+        <div>
+            <h2 class="text-2xl font-bold text-slate-700 mb-4">Kế hoạch Hiện tại</h2>
+            <div id="responseContainer" class="mt-2 p-4 border border-gray-200 bg-gray-50 rounded-md min-h-[150px] text-gray-700 whitespace-pre-wrap flex items-center justify-center"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        // --------------------------------------------------------------------
+        // SECTION 1: IMPORTS
+        // --------------------------------------------------------------------
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-app.js";
+        import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, query, where, orderBy, limit, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-firestore.js";
+        import { getAI, getGenerativeModel } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-ai.js";
+
+        // --------------------------------------------------------------------
+        // SECTION 2: FIREBASE & LIBRARY CONFIGURATION
+        // --------------------------------------------------------------------
+        const firebaseConfig = {
+            apiKey: "AIzaSyC5IL0h_wC-ydk3H9S_lmvSwVsUTtPJE3s",
+            authDomain: "aidirect-a4a8e.firebaseapp.com",
+            projectId: "aidirect-a4a8e",
+            storageBucket: "aidirect-a4a8e.firebasestorage.app",
+            messagingSenderId: "113612483396",
+            appId: "1:113612483396:web:4fd1bfe92c936ecd818511"
+        };
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js`;
+
+        // --------------------------------------------------------------------
+        // SECTION 3: DOM ELEMENT SELECTORS
+        // --------------------------------------------------------------------
+        const authContainer = document.getElementById('authContainer');
+        const authContent = document.getElementById('auth-content');
+        const initErrorContainer = document.getElementById('initialization-error');
+        const emailInput = document.getElementById('emailInput');
+        const passwordInput = document.getElementById('passwordInput');
+        const loginButton = document.getElementById('loginButton');
+        const registerButton = document.getElementById('registerButton');
+        const authMessage = document.getElementById('authMessage');
+        const appContainer = document.getElementById('appContainer');
+        const userStatus = document.getElementById('userStatus');
+        const promptInput = document.getElementById('promptInput');
+        const sendPromptButton = document.getElementById('sendPromptButton');
+        const buttonText = document.getElementById('buttonText');
+        const statusMessage = document.getElementById('statusMessage');
+        const fileInput = document.getElementById('fileInput');
+        const uploadButton = document.getElementById('uploadButton');
+        const uploadStatus = document.getElementById('uploadStatus');
+        const responseContainer = document.getElementById('responseContainer');
+
+        // --------------------------------------------------------------------
+        // SECTION 4: INITIALIZATION AND MAIN LOGIC
+        // --------------------------------------------------------------------
+        let auth, db, aiModelJson, aiModelText;
+
+        try {
+            const app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+            const ai = getAI(app);
+            aiModelJson = getGenerativeModel(ai, { model: "gemini-1.5-flash-latest", generationConfig: { responseMimeType: "application/json" } });
+            aiModelText = getGenerativeModel(ai, { model: "gemini-1.5-flash-latest" });
+            
+            console.log("Firebase services initialized successfully.");
+            setupApplicationLogic();
+
+        } catch (error) {
+            console.error("FIREBASE INITIALIZATION FAILED:", error);
+            authContent.style.display = 'none';
+            let errorHtml = `
+                <div class="p-4 bg-red-100 border border-red-400 text-red-700 rounded-md text-left">
+                    <p class="font-bold text-lg">Lỗi Cấu hình Firebase</p>
+                    <p class="mt-2 text-sm">Không thể khởi tạo ứng dụng. Lỗi: ${error.message}</p>
+                    ${error.message.includes('API key not valid') ? `
+                    <p class="mt-2 text-sm">Vui lòng kiểm tra lại <strong>firebaseConfig</strong> trong mã nguồn và đảm bảo nó chính xác. Bạn có thể lấy lại từ Cài đặt dự án trong Firebase Console.</p>
+                    ` : ''}
+                </div>`;
+            initErrorContainer.innerHTML = errorHtml;
+            initErrorContainer.classList.remove('hidden');
+        }
+
+        // --------------------------------------------------------------------
+        // SECTION 5: APPLICATION LOGIC SETUP
+        // --------------------------------------------------------------------
+        function setupApplicationLogic() {
+            // --- Helper Functions ---
+            const showAuthMessage = (message, isError = true) => {
+                authMessage.innerHTML = '';
+                authMessage.textContent = message;
+                authMessage.className = `text-center font-medium mt-4 h-auto ${isError ? 'text-red-600' : 'text-green-600'}`;
+            };
+            
+            const renderPlan = (tasks) => {
+                responseContainer.innerHTML = '';
+                if (!tasks || tasks.length === 0) {
+                    responseContainer.innerHTML = '<p>Kế hoạch này không có công việc nào.</p>'; return;
+                }
+                const taskList = document.createElement('ul');
+                taskList.className = 'space-y-4 text-left w-full';
+                tasks.forEach(task => {
+                    const listItem = document.createElement('li');
+                    listItem.className = 'p-4 bg-white border border-gray-200 rounded-lg shadow-sm';
+                    listItem.innerHTML = `<div class="flex items-start"><input type="checkbox" class="h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 mt-1 mr-4"><div><p class="font-semibold text-slate-800">${task.title}</p><p class="text-sm text-gray-500 mt-1"><em>Gợi ý: ${task.suggestion}</em></p></div></div>`;
+                    taskList.appendChild(listItem);
+                });
+                responseContainer.appendChild(taskList);
+            };
+
+            const loadLatestPlan = async (userId) => {
+                responseContainer.innerHTML = '<p>Đang tải kế hoạch gần nhất...</p>';
+                try {
+                    const q = query(collection(db, "plans"), where("userId", "==", userId), orderBy("createdAt", "desc"), limit(1));
+                    const querySnapshot = await getDocs(q);
+                    if (!querySnapshot.empty) { 
+                        renderPlan(querySnapshot.docs[0].data().tasks); 
+                    } else { 
+                        responseContainer.innerHTML = '<p>Bạn chưa có kế hoạch nào. Hãy tạo một cái mới!</p>'; 
+                    }
+                } catch (error) { 
+                    console.error("Error loading plan:", error); 
+                    responseContainer.innerHTML = '<p class="text-red-600">Không thể tải kế hoạch.</p>'; 
+                }
+            };
+            
+            // --- Auth State Observer ---
+            onAuthStateChanged(auth, user => {
+                if (user) {
+                    authContainer.style.display = 'none'; 
+                    appContainer.style.display = 'block';
+                    userStatus.innerHTML = `<span class="text-gray-700">Xin chào, <strong class="font-semibold text-slate-800">${user.email}</strong></span><button id="logoutButton" class="py-1 px-3 text-sm bg-red-600 text-white font-semibold rounded-md hover:bg-red-700 transition-colors">Đăng xuất</button>`;
+                    document.getElementById('logoutButton').addEventListener('click', () => signOut(auth));
+                    loadLatestPlan(user.uid);
+                } else {
+                    authContainer.style.display = 'block'; 
+                    appContainer.style.display = 'none';
+                }
+            });
+
+            // --- Event Listeners ---
+            registerButton.addEventListener('click', async () => {
+                showAuthMessage(''); 
+                try { 
+                    await createUserWithEmailAndPassword(auth, emailInput.value, passwordInput.value); 
+                    showAuthMessage("Đăng ký thành công!", false); 
+                } catch (error) { 
+                    showAuthMessage(`Lỗi: ${error.code}`); 
+                }
+            });
+
+            loginButton.addEventListener('click', async () => {
+                showAuthMessage(''); 
+                try { 
+                    await signInWithEmailAndPassword(auth, emailInput.value, passwordInput.value); 
+                } catch (error) { 
+                    showAuthMessage(`Lỗi: ${error.code}`); 
+                }
+            });
+            
+            sendPromptButton.addEventListener("click", async () => {
+                const user = auth.currentUser; if (!user) return;
+                const userGoal = promptInput.value.trim(); if (!userGoal) { statusMessage.textContent = "Vui lòng nhập mục tiêu."; return; }
+                statusMessage.textContent = "AI đang tìm tài liệu và suy nghĩ..."; sendPromptButton.disabled = true; buttonText.textContent = "Đang xử lý..."; responseContainer.innerHTML = '<div class="spinner"></div>';
+                try {
+                    let contextText = "Không có ngữ cảnh bổ sung.";
+                    try {
+                        const knowledgeQuery = query(collection(db, "knowledge_base"), where("userId", "==", user.uid), orderBy("createdAt", "desc"), limit(5));
+                        const knowledgeSnapshot = await getDocs(knowledgeQuery);
+                        if (!knowledgeSnapshot.empty) {
+                            const summaries = knowledgeSnapshot.docs.map(doc => `- (Từ file ${doc.data().fileName}): ${doc.data().summary.replace(/\n/g, ' ')}`).join('\n');
+                            contextText = `Đây là một vài thông tin ngữ cảnh từ các tài liệu gần đây của người dùng để bạn tham khảo:\n${summaries}`;
+                        }
+                    } catch (e) {
+                        console.warn("Could not retrieve knowledge base context:", e);
+                    }
+
+                    const finalPrompt = `Bạn là một chuyên gia quản lý dự án xuất sắc. Hãy phân rã mục tiêu sau đây của người dùng thành một đối tượng JSON: "${userGoal}".\n\n${contextText}\n\nDựa vào mục tiêu và ngữ cảnh trên (nếu có), hãy tạo ra một kế hoạch chi tiết. Đối tượng JSON phải có một khóa duy nhất là "tasks". Giá trị của "tasks" là một mảng các đối tượng, mỗi đối tượng có hai thuộc tính: 1. "title" (một chuỗi string, là một công việc cụ thể, có thể hành động được) và 2. "suggestion" (một chuỗi string, là một gợi ý hữu ích cho công việc đó). Toàn bộ nội dung của "title" và "suggestion" phải bằng tiếng Việt.`;
+                    
+                    const result = await aiModelJson.generateContent(finalPrompt);
+                    const tasks = JSON.parse(result.response.text()).tasks;
+                    await addDoc(collection(db, "plans"), { userId: user.uid, goal: userGoal, tasks: tasks, createdAt: serverTimestamp() });
+                    renderPlan(tasks); 
+                    statusMessage.textContent = "AI đã lập kế hoạch dựa trên ngữ cảnh thành công!";
+                } catch (error) { 
+                    console.error("AI Planning Error:", error); 
+                    statusMessage.textContent = "Lỗi khi tạo kế hoạch."; 
+                    responseContainer.innerHTML = `<p class="text-red-600">Đã xảy ra lỗi. Vui lòng thử lại.</p>`; 
+                } finally { 
+                    sendPromptButton.disabled = false; 
+                    buttonText.textContent = "Lập Kế Hoạch Thông Minh"; 
+                }
+            });
+
+            uploadButton.addEventListener('click', async () => {
+                const user = auth.currentUser; 
+                const file = fileInput.files[0];
+                if (!user || !file) { 
+                    uploadStatus.textContent = !user ? "Bạn cần đăng nhập." : "Vui lòng chọn file."; 
+                    return; 
+                }
+                uploadButton.disabled = true; 
+                uploadStatus.textContent = `Đang xử lý file: ${file.name}...`;
+                try {
+                    let fileContent = ''; 
+                    const fileExtension = file.name.split('.').pop().toLowerCase();
+                    switch(fileExtension) {
+                        case 'txt': 
+                            fileContent = await file.text(); 
+                            break;
+                        case 'pdf': 
+                            fileContent = await extractTextFromPdf(file); 
+                            break;
+                        case 'xlsx': 
+                        case 'xls': 
+                            fileContent = await extractTextFromExcel(file); 
+                            break;
+                        case 'docx': 
+                            fileContent = await extractTextFromDocx(file); 
+                            break;
+                        default: 
+                            throw new Error('Định dạng file không được hỗ trợ.');
+                    }
+                    uploadStatus.textContent = "Đã trích xuất nội dung, đang gửi cho AI...";
+                    const summaryPrompt = `Tóm tắt tài liệu sau thành một vài gạch đầu dòng chính. Toàn bộ nội dung tóm tắt phải bằng tiếng Việt. Nội dung tài liệu: "${fileContent}"`;
+                    const result = await aiModelText.generateContent(summaryPrompt);
+                    const summary = result.response.text();
+                    await addDoc(collection(db, "knowledge_base"), { userId: user.uid, fileName: file.name, summary: summary, createdAt: serverTimestamp() });
+                    uploadStatus.textContent = `Đã lưu tóm tắt cho file: ${file.name}`; 
+                    fileInput.value = '';
+                } catch (error) { 
+                    console.error("File Processing Error:", error); 
+                    uploadStatus.textContent = `Lỗi: ${error.message}`; 
+                } finally { 
+                    uploadButton.disabled = false; 
+                }
+            });
+            
+            // --- File Processing Helpers ---
+            async function extractTextFromPdf(file) {
+                const arrayBuffer = await file.arrayBuffer();
+                const pdf = await pdfjsLib.getDocument(arrayBuffer).promise; 
+                let fullText = '';
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i); 
+                    const textContent = await page.getTextContent();
+                    fullText += textContent.items.map(item => item.str).join(' ') + '\n';
+                } 
+                return fullText;
+            }
+            async function extractTextFromExcel(file) {
+                const arrayBuffer = await file.arrayBuffer(); 
+                const workbook = XLSX.read(arrayBuffer); 
+                let fullText = '';
+                workbook.SheetNames.forEach(sheetName => {
+                    const worksheet = workbook.Sheets[sheetName]; 
+                    const csvText = XLSX.utils.sheet_to_csv(worksheet);
+                    fullText += `Sheet: ${sheetName}\n${csvText}\n\n`;
+                }); 
+                return fullText;
+            }
+            async function extractTextFromDocx(file) {
+                const arrayBuffer = await file.arrayBuffer();
+                const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
+                return result.value;
+            }
+        }
+    </script>
+</body>
+</html>
